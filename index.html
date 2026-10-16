@@ -109,12 +109,14 @@ function afficher(records) {
   const bounds = [];
   pts.forEach(p => {
     const prive = estPrive(p.secteur);
-    const filieres = p.filieres
-      ? `<br><b>Filières :</b><br>${String(p.filieres).split(" ; ").map(f => "• " + f).join("<br>")}`
-      : "";
-    const popup = `<b>${p.etablissement || ""}</b><br>${p.commune || ""}<br>
-      ${prive ? "Privé" : "Public"}<br>
-      Capacité : ${p.capacite ?? "n.c."}<br>Vivier : ${p.vivier ?? "n.c."}${filieres}`;
+      const liste = v => String(v).split(" ; ").map(x => "• " + x).join("<br>");
+    const bts = p.filieres ? "<br>" + liste(p.filieres) : "";
+    const bac = Number(p.vivier) > 0 ? "<br>• Bac pro sanitaire et social" : "";
+    const popup = `<b>${p.etablissement || ""}</b><br>${p.commune || ""} · ${prive ? "Privé" : "Public"}
+      <hr style="margin:6px 0">
+      <b>Capacité en STS (supérieur) : ${p.capacite ?? "n.c."}</b>${bts ? "<br><i>Spécialités :</i>" + bts : ""}
+      <hr style="margin:6px 0">
+      <b>Vivier en Bac pro : ${p.vivier ?? "n.c."}</b>${bac ? "<br><i>Formation :</i>" + bac : ""}`;
     if (Number(p.vivier) > 0)
       marqueur(p.lat, p.lng, prive, rayon(p.vivier), true, popup).addTo(layer);
     if (Number(p.capacite) > 0)
