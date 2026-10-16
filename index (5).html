@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carte EPLE : capacité et vivier</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  html, body, #map { height: 100%; margin: 0; }
+  .legend { background: #fff; padding: 8px 10px; border-radius: 6px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.3); font: 12px/1.5 sans-serif; }
+  .legend svg { vertical-align: middle; margin-right: 6px; }
+  .legend .row { margin: 2px 0; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<script>
+// ---------- RÉGLAGES MODIFIABLES ----------
+const RAYON_MAX = 28;                 // rayon (px) du plus gros symbole
+const COULEUR_CAPACITE = "#0b3d5c";   // contour foncé (symbole vide)
+const COULEUR_VIVIER = "#9cc9e6";     // remplissage clair (symbole plein)
+const EPAISSEUR_CONTOUR = 2.5;
+// ------------------------------------------
+
+const map = L.map("map").setView([49.1, 0.3], 8); // Normandie
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  attribution: "&copy; OpenStreetMap"
+}).addTo(map);
+
+let layer = L.layerGroup().addTo(map);
+let legendAdded = false;
+
+function estPrive(secteur) {
+  const s = String(secteur || "").toLowerCase();
+  return s.includes("priv");
+}
+
+function svgSymbole(prive, r, plein) {
+  const d = Math.max(2 * r, 4);
+  const pad = EPAISSEUR_CONTOUR;
+  const taille = d + 2 * pad;
+  const fill = plein ? COULEUR_VIVIER : "none";
+  const stroke = plein ? "none" : COULEUR_CAPACITE;
+  const sw = plein ? 0 : EPAISSEUR_CONTOUR;
+  let forme;
+  if (prive) {
+    forme = `<polygon points="${taille/2},${pad} ${taille-pad},${taille-pad} ${pad},${taille-pad}"
+      fill="${fill}" fill-opacity="${plein ? 0.85 : 1}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"/>`;
+  } else {
+    forme = `<circle cx="${taille/2}" cy="${taille/2}" r="${d/2}"
+      fill="${fill}" fill-opacity="${plein ? 0.85 : 1}" stroke="${stroke}" stroke-width="${sw}"/>`;
+  }
+  return { html: `<svg width="${taille}" height="${taille}" xmlns="http://www.w3.org/2000/svg">${forme}</svg>`, taille };
+}
+
+function marqueur(lat, lng, prive, r, plein, popup) {
+  const { html, taille } = svgSymbole(prive, r, plein);
+  const icon = L.divIcon({
+    html, className: "", iconSize: [taille, taille], iconAnchor: [taille / 2, taille / 2]
+  });
+  return L.marker([lat, lng], { icon, zIndexOffset: plein ? 0 : 1000 }).bindPopup(popup);
+}
+
+function addLegend() {
+  if (legendAdded) return;
+  legendAdded = true;
+  const lg = L.control({ position: "bottomright" });
+  lg.onAdd = () => {
+    const div = L.DomUtil.create("div", "legend");
+    const mini = (prive, plein) => svgSymbole(prive, 8, plein).html;
+    div.innerHTML =
+      `<div class="row"><b>Capacité</b> (vide, foncé)</div>
+       <div class="row">${mini(false,false)}EPLE public</div>
+       <div class="row">${mini(true,false)}EPLE privé</div>
+       <div class="row" style="margin-top:6px"><b>Vivier</b> (plein, clair)</div>
+       <div class="row">${mini(false,true)}EPLE public</div>
+       <div class="row">${mini(true,true)}EPLE privé</div>
+       <div class="row" style="color:#666">Taille proportionnelle à la valeur (surface)</div>`;
+    return div;
+  };
+  lg.addTo(map);
+}
+
+function afficher(records) {
+  layer.clearLayers();
+  const pts = records.filter(r =>
+    typeof r.lat === "number" && typeof r.lng === "number" && !isNaN(r.lat) && !isNaN(r.lng));
+
+  const max = Math.max(1, ...pts.map(r => Math.max(Number(r.capacite) || 0, Number(r.vivier) || 0)));
+  // taille proportionnelle à la surface : rayon = RAYON_MAX * sqrt(valeur / max)
+  const rayon = v => RAYON_MAX * Math.sqrt((Number(v) || 0) / max);
+
+  const bounds = [];
+  pts.forEach(p => {
+    const prive = estPrive(p.secteur);
+    const filieres = p.filieres
+      ? `<br><b>Filières :</b><br>${String(p.filieres).split(" ; ").map(f => "• " + f).join("<br>")}`
+      : "";
+    const popup = `<b>${p.etablissement || ""}</b><br>${p.commune || ""}<br>
+      ${prive ? "Privé" : "Public"}<br>
+      Capacité : ${p.capacite ?? "n.c."}<br>Vivier : ${p.vivier ?? "n.c."}${filieres}`;
+    if (Number(p.vivier) > 0)
+      marqueur(p.lat, p.lng, prive, rayon(p.vivier), true, popup).addTo(layer);
+    if (Number(p.capacite) > 0)
+      marqueur(p.lat, p.lng, prive, rayon(p.capacite), false, popup).addTo(layer);
+    bounds.push([p.lat, p.lng]);
+  });
+
+  if (bounds.length) map.fitBounds(bounds, { padding: [30, 30] });
+  addLegend();
+}
+
+grist.ready({
+  requiredAccess: "read table",
+  columns: [
+    { name: "lat", title: "Latitude", type: "Numeric" },
+    { name: "lng", title: "Longitude", type: "Numeric" },
+    { name: "secteur", title: "Secteur (Public / Privé)", type: "Text" },
+    { name: "capacite", title: "Capacité", type: "Numeric" },
+    { name: "vivier", title: "Vivier", type: "Numeric", optional: true },
+    { name: "etablissement", title: "Établissement", type: "Text", optional: true },
+    { name: "commune", title: "Commune", type: "Text", optional: true },
+    { name: "filieres", title: "Filières (séparées par « ; »)", type: "Text", optional: true }
+  ]
+});
+
+grist.onRecords(records => {
+  const mapped = grist.mapColumnNames(records);
+  if (!mapped) return; // colonnes pas encore associées
+  afficher(mapped);
+});
+</script>
+</body>
+</html>
